@@ -29,7 +29,7 @@ from core.function import validate
 from utils.utils import create_logger
 
 import dataset
-import models
+import src
 
 
 def parse_args():

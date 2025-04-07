@@ -34,7 +34,7 @@ from utils.utils import create_logger
 from utils.utils import get_model_summary
 
 import dataset
-import models
+import src
 
 
 def parse_args():
