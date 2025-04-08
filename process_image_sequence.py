@@ -6,11 +6,20 @@ from src.detector import YOLOv5x
 from src.estimator import HRNet
 
 
-def draw_keypoints(frame, keypoints, threshold=0.3):
+def draw_bboxes(image, boxes, color=(0, 0, 255), thickness=1):
+    img = image.copy()
+    for box in boxes:
+        x1, y1, x2, y2 = [int(coord) for coord in box]
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+    return img
+
+
+def draw_keypoints(image, keypoints, threshold=0.3, color=(0, 255, 0), thickness=1):
+    img = image.copy()
     for x, y, conf in keypoints:
         if conf > threshold:
-            cv2.circle(frame, (int(x), int(y)), 1, (0, 255, 0), -1)
-    return frame
+            cv2.circle(img, (int(x), int(y)), thickness, color, -1)
+    return img
 
 
 if __name__ == "__main__":
@@ -32,11 +41,13 @@ if __name__ == "__main__":
         boxes = detector.detect(frame)
         # Estimate poses for each detected person
         keypoints_list = estimator.infer(frame, boxes)
-        # Draw keypoints on the frame
+        # Draw bboxes and key-points on the frame
+        img = frame.copy()
+        img = draw_bboxes(frame, boxes)
         for keypoints in keypoints_list:
-            frame = draw_keypoints(frame, keypoints)
+            img = draw_keypoints(img, keypoints)
         # Show results
-        cv2.imshow('Pose Estimation', frame)
+        cv2.imshow('Pose Estimation', img)
         # Break on pressing 'q' or space
         key = cv2.waitKey(1) & 0xFF
         if key == ord(' ') or key == ord('q'):
