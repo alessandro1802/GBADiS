@@ -1,8 +1,8 @@
 from types import SimpleNamespace
 
+import numpy as np
 import cv2
 import torch
-import numpy as np
 
 from src.hrnet.lib.config import cfg
 from src.hrnet.lib.config.default import update_config
@@ -17,6 +17,12 @@ class HRNet:
                  model_path="./hrnet/weights/pose_hrnet_w48_384x288.pth",
                  device="cpu"):
         # Load config and update global cfg
+        self.cfg = cfg
+        # COCO flip pairs
+        self.cfg.DATASET.FLIP_PAIRS = [
+            [1, 2], [3, 4], [5, 6], [7, 8],
+            [9, 10], [11, 12], [13, 14], [15, 16]
+        ]
         args = SimpleNamespace(
             cfg=cfg_path,
             opts=[],  # no overrides
@@ -24,15 +30,9 @@ class HRNet:
             logDir='',
             dataDir=''  # or path to model/data root if needed
         )
-        self.cfg = cfg
-        # COCO flip pairs
-        self.cfg.DATASET.FLIP_PAIRS = [
-            [1, 2], [3, 4], [5, 6], [7, 8],
-            [9, 10], [11, 12], [13, 14], [15, 16]
-        ]
         update_config(self.cfg, args)
-        self.device = device
         # Initialize model
+        self.device = device
         self.model = pose_hrnet.get_pose_net(cfg, is_train=False)
         self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.to(self.device)
@@ -50,9 +50,9 @@ class HRNet:
             image (np.ndarray): BGR image.
             bboxes (List[List[int]]): List of [x1, y1, x2, y2] bounding boxes.
         Returns:
-            List[np.ndarray]: List of keypoints arrays (num_joints x 3).
+            List[np.ndarray]: List of key-points arrays (num_joints x 3).
         """
-        keypoints_all = []
+        keypoints = []
         for bbox in bboxes:
             input_tensor, center, scale, _ = self.preprocess(image, bbox)
             with torch.no_grad():
@@ -64,10 +64,9 @@ class HRNet:
                     output = (output.cpu().numpy() + flipped_output) * 0.5
                 else:
                     output = output.cpu().numpy()
-
                 preds, confs = get_final_preds(self.cfg, output, np.array([center]), np.array([scale]))
-                keypoints_all.append(np.concatenate([preds[0], confs[0]], axis=1))  # shape: (num_joints, 3))
-        return keypoints_all
+                keypoints.append(np.concatenate([preds[0], confs[0]], axis=1))  # shape: (num_joints, 3))
+        return keypoints
 
     def preprocess(self, image, bbox):
         """
