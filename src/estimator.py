@@ -1,7 +1,9 @@
 from types import SimpleNamespace
+from argparse import Namespace
 
 import numpy as np
 import cv2
+from PIL import Image
 import torch
 
 from src.hrnet.lib.config import cfg
@@ -9,6 +11,9 @@ from src.hrnet.lib.config.default import update_config
 from src.hrnet.lib.models import pose_hrnet
 from src.hrnet.lib.utils.transforms import get_affine_transform, flip_back
 from src.hrnet.lib.core.inference import get_final_preds
+
+import src.raft.core.raft as raft
+from src.raft.core.utils.utils import InputPadder
 
 
 class HRNet:
@@ -110,3 +115,32 @@ class HRNet:
         elif w < self.aspect_ratio * h:
             w = h * self.aspect_ratio
         return center_x, center_y, w, h
+
+
+class RAFT:
+    def __init__(self, model_path='./raft/weights/raft-sintel.pth', device='cpu'):
+        self.device = torch.device(device)
+        self.model = raft.RAFT(Namespace(small=False, mixed_precision=False, alternate_corr=False))
+        state_dict = torch.load(model_path, map_location=self.device)
+        new_state_dict = {k.replace("module.", ""): v for k, v in state_dict.items()}
+        self.model.load_state_dict(new_state_dict)
+        # self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.to(self.device)
+        self.model.eval()
+
+    def preprocess(self, img):
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        img = Image.fromarray(img)
+        img = np.array(img).astype(np.uint8)
+        img = torch.from_numpy(img).permute(2, 0, 1).float()
+        return img[None].to(self.device)
+
+    def compute_flow(self, image1, image2):
+        image1 = self.preprocess(image1)
+        image2 = self.preprocess(image2)
+        padder = InputPadder(image1.shape)
+        image1, image2 = padder.pad(image1, image2)
+
+        with torch.no_grad():
+            flow_low, flow_up = self.model(image1, image2, iters=20, test_mode=True)
+        return flow_up[0].permute(1, 2, 0).cpu().numpy()  # (H, W, 2)
