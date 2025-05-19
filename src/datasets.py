@@ -6,18 +6,22 @@ import torch
 from torch.utils.data import Dataset
 
 
+# P - max_people, T - seq_len, N - n_nodes, F_low - n_features, F_high - 2
 class SurveillanceAnomalyDataset(Dataset):
-    def __init__(self, root_dir: str, num_frames: int = 5, num_nodes: int = 17, max_people: int = 30, transform=None):
+    def __init__(self, root_dir: str,
+                 seq_len: int = 5, num_nodes: int = 17, n_features: int = 2, max_people: int = 30, transform=None):
         """
         :param root_dir: path to dataset root containing video folders (e.g., Train001).
-        :param num_frames: number of consecutive frames per sequence sample (T)
+        :param seq_len: number of consecutive frames per sequence sample
         :param num_nodes: number of joints per person (N, N=17 based on HRNet).
+        :param n_features: number of features per 1 key-point.
         :param max_people: maximum number of people per video.
         :param transform: optional transform to apply to the data.
         """
         self.root_dir = root_dir
-        self.num_frames = num_frames
+        self.T = seq_len
         self.num_nodes = num_nodes
+        self.n_features = n_features  # Store (x, y) # TODO check RAFT return
         self.max_people = max_people
         self.transform = transform
         self.samples = self._gather_samples()
@@ -27,7 +31,7 @@ class SurveillanceAnomalyDataset(Dataset):
     def _gather_samples(self):
         """
         Gathers paths to JSON files for each sequence in the dataset.
-        Each sample will contain a sequence of 'num_frames' JSON files.
+        Each sample will contain a sequence of 'T' JSON files.
         """
         samples = []
         for seq_folder in sorted(os.listdir(self.root_dir)):
@@ -35,9 +39,9 @@ class SurveillanceAnomalyDataset(Dataset):
             json_dir = os.path.join(seq_path, 'json')
             if os.path.isdir(json_dir):
                 json_files = sorted(glob.glob(os.path.join(json_dir, '*.json')))
-                if len(json_files) >= self.num_frames:
-                    for i in range(len(json_files) - self.num_frames):
-                        samples.append(json_files[i : i + self.num_frames])
+                if len(json_files) >= self.T:
+                    for i in range(len(json_files) - self.T + 1):
+                        samples.append(json_files[i : i + self.T])
         return samples
 
     def __len__(self):
@@ -47,141 +51,152 @@ class SurveillanceAnomalyDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        """
-        Generates one sample of data, consisting of 'num_frames' of skeleton data.
-        """
-        json_paths = self.samples[idx]
-        all_people_keypoints = []  # Store keypoints for all individuals in each frame
-        for json_path in json_paths:
-            with open(json_path, 'r') as f:
+        frame_paths = self.samples[idx]
+        trackid_to_skeletons = dict()  # {trackID: [skeleton_t0, skeleton_t1, ..., skeleton_tT]}
+        trackid_to_centers = dict()
+        trackid_to_heights = dict()
+        # Read the data
+        for frame_idx, frame_path in enumerate(frame_paths):
+            with open(frame_path, 'r') as f:
                 data = json.load(f)
-            keypoint_data = data.get('keypoints', [])
-            # boxes = data.get('boxes', [])
-            frame_person_skeletons = []
-            if keypoint_data:
-                for person_idx, person_keypoints in enumerate(keypoint_data):
-                    person_keypoints_np = np.array(person_keypoints, dtype=np.float32)  # [num_nodes, 3]
-                    # Pad or trim the number of key-points
-                    # if person_keypoints_np.shape[0] < self.num_nodes:
-                    #     pad_len = self.num_nodes - person_keypoints_np.shape[0]
-                    #     padding = np.zeros((pad_len, 3), dtype=np.float32)
-                    #     person_keypoints_np = np.vstack([person_keypoints_np, padding])
-                    # elif person_keypoints_np.shape[0] > self.num_nodes:
-                    #     person_keypoints_np = person_keypoints_np[:self.num_nodes]
-                    person_keypoints_np = person_keypoints_np[:, :2]
-                    self.n_features = person_keypoints_np.shape[1]
-                    frame_person_skeletons.append(person_keypoints_np)  # Store (x, y)
-            all_people_keypoints.append(frame_person_skeletons)
+            tracks = data.get('tracks', [])  # [[trackID, box], ...]
+            keypoint_data = data.get('keypoints', [])  # [[num_nodes, 3], ...]
+            # Map trackID to keypoints
+            for (track_id, _), keypoints in zip(tracks, keypoint_data):
+                keypoints_arr = np.array(keypoints, dtype=np.float32)[:, :self.n_features]  # [num_nodes, n_features]
+                if track_id not in trackid_to_skeletons:
+                    trackid_to_skeletons[track_id] = []
+                    trackid_to_centers[track_id] = []
+                    trackid_to_heights[track_id] = []
+                trackid_to_skeletons[track_id].append(keypoints_arr)
+                # Compute geometric center and height
+                torso_joints = keypoints_arr[self.torso_joint_indices]
+                center = np.mean(torso_joints, axis=0)
+                height = np.max(keypoints_arr[:, 1]) - np.min(keypoints_arr[:, 1])
+                trackid_to_centers[track_id].append(center.astype(np.float32))
+                trackid_to_heights[track_id].append(height)
+            # Pad missing trackIDs with zeros for this frame
+            for track_id in trackid_to_skeletons:
+                while len(trackid_to_skeletons[track_id]) < frame_idx + 1:
+                    trackid_to_skeletons[track_id].append(np.zeros((self.num_nodes, self.n_features), dtype=np.float32))
+                    trackid_to_centers[track_id].append(np.zeros(2, dtype=np.float32))
+                    trackid_to_heights[track_id].append(0.0)
+        # Normalize all tracked sequences
+        sequence_centers = []
+        sequence_joints = []
+        for track_id in trackid_to_skeletons:
+            centers = np.stack(trackid_to_centers[track_id])  # [T, 2]
+            sequence_centers.append(centers)
+            trajectory = np.stack(trackid_to_skeletons[track_id])  # [T, num_nodes, n_features]
+            heights = np.array(trackid_to_heights[track_id], dtype=np.float32)  # [T]
 
-        # Process each person's trajectory independently within the sequence
-        max_people = max(len(frame_skeletons) for frame_skeletons in all_people_keypoints) if all_people_keypoints else 0
-        processed_sequence = []
-        for person_idx in range(max_people):
-            person_trajectory = []
-            person_centers = []
-            person_heights = []
-            for frame_idx in range(self.num_frames):
-                if person_idx < len(all_people_keypoints[frame_idx]):
-                    skeleton = all_people_keypoints[frame_idx][person_idx]  # [N, 2]
-                    person_trajectory.append(skeleton)
-                    # Calculate geometric center
-                    torso_joints = skeleton[self.torso_joint_indices]
-                    center_x = np.mean(torso_joints[:, 0])
-                    center_y = np.mean(torso_joints[:, 1])
-                    person_centers.append(np.array([center_x, center_y], dtype=np.float32))
-                    # Calculate bounding box height using all joints
-                    min_y = np.min(skeleton[:, 1])
-                    max_y = np.max(skeleton[:, 1])
-                    height = max_y - min_y
-                    person_heights.append(height)
-                else:
-                    # Pad with zeros if the person is not present in this frame
-                    person_trajectory.append(np.zeros((self.num_nodes, 2), dtype=np.float32))
-                    person_centers.append(np.zeros(2, dtype=np.float32))
-                    person_heights.append(0.0)
-            person_trajectory = np.stack(person_trajectory)  # [T, N, 2]
-            person_centers = np.stack(person_centers)  # [T, 2]
-            person_heights = np.array(person_heights, dtype=np.float32)  # [T]
-
-            normalized_trajectory = []
-            for t in range(self.num_frames):
-                height = person_heights[t] / 2.0 if person_heights[t] > 0 else 1.0
-                center = person_centers[t]
-                # Normalize wrt half height
-                normalized_frame = (person_trajectory[t] - center) / np.clip(height, a_min=1e-6, a_max=None)
-                normalized_trajectory.append(normalized_frame)
-            normalized_trajectory = np.stack(normalized_trajectory)  # [T, N, 2]
-            processed_sequence.append((person_centers, normalized_trajectory))
-
-        num_people = len(processed_sequence)
-        centers = [data[0] for data in processed_sequence]
-        normalized_joints = [data[1] for data in processed_sequence]
-
+            normalized = []
+            for t in range(self.T):
+                h = heights[t] / 2.0 if heights[t] > 0 else 1.0
+                normalized_frame = (trajectory[t] - centers[t]) / np.clip(h, a_min=1e-6, a_max=None)
+                normalized.append(normalized_frame)
+            normalized = np.stack(normalized)  # [T, num_nodes, n_features]
+            sequence_joints.append(normalized)
+        # Pad/truncate to self.max_people
+        num_people = len(sequence_centers)
         padding_needed = self.max_people - num_people
         if padding_needed > 0:
-            centers.extend(
-                [np.zeros((self.num_frames, self.n_features), dtype=np.float32)] * padding_needed
-            )
-            normalized_joints.extend(
-                [np.zeros((self.num_frames, self.num_nodes, self.n_features), dtype=np.float32)] * padding_needed
-            )
+            sequence_centers.extend([np.zeros((self.T, self.n_features), dtype=np.float32)] * padding_needed)
+            sequence_joints.extend([np.zeros((self.T, self.num_nodes, self.n_features),
+                                             dtype=np.float32)] * padding_needed)
         elif padding_needed < 0:
-            centers = centers[:self.max_people]
-            normalized_joints = normalized_joints[:self.max_people]
-        # Prepare input treating each person as a separate entity in the batch dimension.
-        padded_high_level_features = np.stack(centers)
-        padded_low_level_features = np.stack(normalized_joints)
-        # For simplicity, we'll combine geometric centers and normalized joints as features for each node.
-        # Each node in the graph will represent a joint of a person at a specific time step.
-        # However, the paper describes high-level (person centers) and low-level (normalized joints) graphs.
-        # We'll return them separately for now to align with the paper's description. # TODO
+            sequence_centers = sequence_centers[:self.max_people]
+            sequence_joints = sequence_joints[:self.max_people]
+        # [max_people, T, 2]
+        high_level_features = torch.tensor(np.stack(sequence_centers), dtype=torch.float32)
+        # [max_people, T, num_nodes, n_features]
+        low_level_features = torch.tensor(np.stack(sequence_joints), dtype=torch.float32)
 
-        # High-level graph nodes (geometric centers) - [num_people, T, 2]
-        high_level_features = torch.tensor(padded_high_level_features,
-                                           dtype=torch.float32)  # [1, max_people, T, n_features]
-        # Low-level graph nodes (normalized joints) - [num_people, T, N, 2]
-        low_level_features =torch.tensor(padded_low_level_features,
-                                         dtype=torch.float32)  # [1, max_people, T, N, n_features]
-        # The adjacency matrix for the low-level graph (semantic connections between body joints) is fixed.
-        # We'll create a simple adjacency based on a typical human skeleton structure.
-        # This adjacency will be the same for all people and all time frames in this sample. # TODO
-        low_level_adj = self._get_skeleton_adjacency(self.num_nodes)
-        # For the high-level graph (connections between people), the adjacency might be based on proximity.
-        # This requires information about the spatial arrangement of people, which isn't directly available here.
-        # For now, we'll return an empty adjacency or a fully connected one. # TODO
-        high_level_adj = self._get_fully_connected_edges(self.max_people) if self.max_people > 0 else torch.empty(
-            (2, 0), dtype=torch.long
-        )
+        # low_level_adj = self._get_skeleton_adjacency(self.num_nodes)
+        # high_level_adj = self._get_fully_connected_edges(self.max_people) if self.max_people > 0 else torch.empty(
+        #     (2, 0),
+        #     dtype=torch.long
+        # )
+
+        # [T, (max_people * (max_people - 1)), 3]
+        high_level_adj = self._get_dynamic_center_adjacency(high_level_features)
+        # [max_people, T, num_nodes * (num_nodes - 1), 3]
+        low_level_adj = self._get_dynamic_joint_adjacency(low_level_features)
+
         return {
-            'high_level_features': high_level_features,  # [num_people, T, n_features]
-            'low_level_features': low_level_features,  # [num_people, T, N, n_features]
-            'low_level_adj': low_level_adj,  # [2, E_low]
-            'high_level_adj': high_level_adj  # [2, E_high]
+            'high_level_features': high_level_features,  # [max_people, T, 2]
+            'low_level_features': low_level_features,  # [max_people, T, num_nodes, n_features]
+            'high_level_adj': high_level_adj,  # [T, (max_people * (max_people - 1)), 3]
+            'low_level_adj': low_level_adj,  # [max_people, T, num_nodes * (num_nodes - 1), 3]
         }
 
-    def _get_fully_connected_edges(self, num_nodes):
+    def _get_dynamic_center_adjacency(self, centers):
         """
-        Creates a fully connected adjacency matrix (represented as edge index).
+        centers: [max_people, T, 2] - geometric centers
+        Returns: [T, E = (max_people * (max_people - 1)), 3] - edge list for each frame: (i, j, weight)
         """
-        src, dst = [], []
-        for i in range(num_nodes):
-            for j in range(num_nodes):
-                if i != j:
-                    src.append(i)
-                    dst.append(j)
-        return torch.tensor([src, dst], dtype=torch.long)
+        max_people, T, _ = centers.shape
+        edges_per_time = []
+        for t in range(T):
+            edge_list = []
+            frame_centers = centers[:, t]  # [max_people, 2]
+            for i in range(max_people):
+                for j in range(max_people):
+                    if i == j:
+                        continue
+                    dist_sq = torch.sum((frame_centers[i] - frame_centers[j]) ** 2).item()
+                    weight = 1.0 / dist_sq if dist_sq > 1e-6 else 0.0
+                    edge_list.append([i, j, weight])
+            edges_per_time.append(edge_list)
+        return torch.tensor(edges_per_time, dtype=torch.float32)  # [T, E, 3]
 
-    def _get_skeleton_adjacency(self, num_nodes):
+    def _get_dynamic_joint_adjacency(self, joints):
         """
-        Creates a fixed adjacency matrix based on human skeleton connections (HRNet).
+        joints: [max_people, T, num_nodes, n_features] - normalized joint positions
+        Returns: [max_people, T, E = (num_nodes * (num_nodes - 1)), 3] - each edge (i, j, weight)
         """
-        edges = [
-            (0, 1), (1, 2), (2, 3), (0, 4), (4, 5), (5, 6), (0, 7), (7, 8), (8, 9),
-            (7, 10), (10, 11), (11, 12), (0, 13), (13, 14), (14, 15), (7, 16)
-        ]
-        src = [u for u, v in edges]
-        dst = [v for u, v in edges]
-        return torch.tensor([src, dst], dtype=torch.long)
+        max_people, T, num_nodes, n_features = joints.shape
+        edges_per_person = []
+
+        for person_idx in range(max_people):
+            person_edges = []
+            for t in range(T):
+                frame_joints = joints[person_idx, t]  # [num_nodes, n_features]
+                edge_list = []
+                for i in range(num_nodes):
+                    for j in range(num_nodes):
+                        if i == j:
+                            continue
+                        dist_sq = torch.sum((frame_joints[i] - frame_joints[j]) ** 2).item()
+                        weight = 1.0 / dist_sq if dist_sq > 1e-6 else 0.0
+                        edge_list.append([i, j, weight])
+                person_edges.append(edge_list)  # shape: [E, 3]
+            edges_per_person.append(person_edges)
+        return torch.tensor(edges_per_person, dtype=torch.float32)  # [max_people, T, E, 3]
+
+    # def _get_fully_connected_edges(self, num_nodes):
+    #     """
+    #     Creates a fully connected adjacency matrix (represented as edge index).
+    #     """
+    #     src, dst = [], []
+    #     for i in range(num_nodes):
+    #         for j in range(num_nodes):
+    #             if i != j:
+    #                 src.append(i)
+    #                 dst.append(j)
+    #     return torch.tensor([src, dst], dtype=torch.long)
+    #
+    # def _get_skeleton_adjacency(self, num_nodes):
+    #     """
+    #     Creates a fixed adjacency matrix based on human skeleton connections (HRNet).
+    #     """
+    #     edges = [
+    #         (0, 1), (1, 2), (2, 3), (0, 4), (4, 5), (5, 6), (0, 7), (7, 8), (8, 9),
+    #         (7, 10), (10, 11), (11, 12), (0, 13), (13, 14), (14, 15), (7, 16)
+    #     ]
+    #     src = [u for u, v in edges]
+    #     dst = [v for u, v in edges]
+    #     return torch.tensor([src, dst], dtype=torch.long)
 
 
 if __name__ == '__main__':
@@ -192,11 +207,5 @@ if __name__ == '__main__':
     sample = dataset[0]
     print("High-level features shape:", sample['high_level_features'].shape)
     print("Low-level features shape:", sample['low_level_features'].shape)
-    print("Low-level adjacency shape:", sample['low_level_adj'].shape)
     print("High-level adjacency shape:", sample['high_level_adj'].shape)
-
-    shapes = np.array([sample['high_level_features'].shape for sample in dataset])
-    print(shapes.shape)
-    shape, count = np.unique(shapes, axis =0, return_counts=True)
-    for i, s in enumerate(shape):
-        print(f"{s}: {count[i]}")
+    print("Low-level adjacency shape:", sample['low_level_adj'].shape)
