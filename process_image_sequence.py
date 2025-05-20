@@ -9,11 +9,12 @@ import numpy as np
 
 from src.detector import YOLOv5x
 from src.estimator import HRNet, RAFT
+from src.tracker import OpticalFlowTracker
 
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-
+# TODO remove
 def draw_flow_overlay(image, flow):
     hsv = np.zeros_like(image)
     hsv[..., 1] = 255
@@ -27,11 +28,13 @@ def draw_flow_overlay(image, flow):
     return blended
 
 
-def draw_bboxes(image, boxes, color=(0, 0, 255), thickness=1):
+def draw_bboxes(image, tracks, font_scale=0.2, color=(0, 0, 255), thickness=1):
     img = image.copy()
-    for box in boxes:
-        x1, y1, x2, y2 = [int(coord) for coord in box]
+    for track_id, bbox in tracks:
+        x1, y1, x2, y2 = [int(coord) for coord in bbox]
         cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
+        cv2.putText(img, f"ID: {track_id}", (x1, y1 - 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
     return img
 
 
@@ -51,6 +54,8 @@ if __name__ == "__main__":
 
     DEVICE = "mps"
     display = False
+    write_results = True
+
     # Load models
     detector = YOLOv5x(model_path="./src/yolov5/weights/yolov5x.pt", device=DEVICE)
     pose_estimator = HRNet(cfg_path="./src/hrnet/experiments/coco/hrnet/w48_384x288_adam_lr1e-3.yaml",
@@ -67,39 +72,73 @@ if __name__ == "__main__":
                 if not image_files:
                     raise Exception("No TIFF files found in the directory.")
                 frames = [cv2.imread(os.path.join(video_path, image_file)) for image_file in image_files]
-                # Create output directories
-                output_path = os.path.join(output_dir, subset, split, video_path.split('/')[-1])
-                output_path_json = os.path.join(output_path, "json")
-                os.makedirs(output_path_json, exist_ok=True)
-                output_path_flow = os.path.join(output_path, "flow")
-                os.makedirs(output_path_flow, exist_ok=True)
+                if write_results:
+                    # Create output directories
+                    output_path = os.path.join(output_dir, subset, split, video_path.split('/')[-1])
+                    output_path_json = os.path.join(output_path, "json")
+                    ### TODO remove
+                    if os.path.exists(output_path_json):
+                        continue
+                    # output_path_flow = os.path.join(output_path, "flow")
+                    # os.makedirs(output_path_flow, exist_ok=True)
+                    ###
+                    os.makedirs(output_path_json, exist_ok=True)
                 # Process video frames
+                tracker = OpticalFlowTracker(max_age=20, min_hits=3, iou_threshold=0.3)
                 prev_frame = None
                 for frame_idx, frame in enumerate(frames):
                     # Estimate optical flow
                     if prev_frame is not None:
-                        flow = flow_estimator.compute_flow(prev_frame, frame)
+                        ### TODO remove
+                        exported_flow_path = os.path.join("./data/processed/UCSD_Anomaly_Dataset.v1p2_OLD", subset, split, video_path.split('/')[-1], "flow")
+                        if os.path.exists(exported_flow_path):
+                            pass
+                            flow = np.load(os.path.join(exported_flow_path, f"{frame_idx + 1:03d}.npy"))
+                        else:
+                            flow = flow_estimator.compute_flow(prev_frame, frame)
+                        ###
+                        # flow = flow_estimator.compute_flow(prev_frame, frame) # TODO uncomment
                     else:
                         flow = None
                     prev_frame = frame.copy()
                     # Detect people in the frame
-                    boxes = detector.detect(frame)
+                    bboxes = detector.detect(frame)
                     # Estimate poses for each detected person
-                    keypoints_list = pose_estimator.infer(frame, boxes)
-                    # Export bboxes and pose estimations
-                    with open(os.path.join(output_path_json, f"{frame_idx + 1:03d}.json"), 'w') as f:
-                        json.dump({'boxes': [b.tolist() for b in boxes],  # (N, 4)
-                                   'keypoints': [k.tolist() for k in keypoints_list],  # (N, num_joints = (17, 3))
-                                   }, f)
-                    # Export optical flow
-                    if flow is not None:
-                        np.save(os.path.join(output_path_flow, f"{frame_idx + 1:03d}.npy"), flow)  # (H, W, 3)
-                    # Draw optical flow, bboxes and key-points on the frame
+                    keypoints_list = pose_estimator.infer(frame, bboxes)
+                    # Update tracker with detections and flow
+                    try: ### TODO remove
+                        tracks = tracker.update(bboxes, flow)
+                    ### TODO remove
+                    except Exception as e:
+                        print(frame_idx+1, bboxes)
+                        if any([np.isnan(coord) for box in bboxes for coord in box]):
+                            bboxes = detector.detect(frame)
+                            tracks = tracker.update(bboxes, flow)
+                    ###
+                    if write_results:
+                        # Export bboxes and pose estimations
+                        if tracks:
+                            with open(os.path.join(output_path_json, f"{frame_idx + 1:03d}.json"), 'w') as f:
+                                json.dump({
+                                    # (N, 5)
+                                    "tracks": [[trackID, box.tolist()] for trackID, box in tracks],
+                                    # (N, num_joints, n_features) = (N, 17, 3))
+                                    "keypoints": [k.tolist() for k in keypoints_list],
+                                }, f)
+                        ### TODO remove
+                        # # Export optical flow
+                        # if flow is not None:
+                        #     # (H, W, 3)
+                        #     np.save(os.path.join(output_path_flow, f"{frame_idx + 1:03d}.npy"), flow)
+                        ###
                     if display:
+                        # Draw optical flow, bboxes and key-points on the frame
                         img = frame.copy()
-                        if flow is not None:
-                            img = draw_flow_overlay(img, flow)
-                        img = draw_bboxes(img, boxes)
+                        ### TODO remove
+                        # if flow is not None:
+                        #     img = draw_flow_overlay(img, flow)
+                        ###
+                        img = draw_bboxes(img, tracks)
                         for keypoints in keypoints_list:
                             img = draw_keypoints(img, keypoints)
                         # Show results
