@@ -1,3 +1,0 @@
-pytorch-lightning==2.5.1
-torch==2.6.0
-torch-geometric==2.6.1
