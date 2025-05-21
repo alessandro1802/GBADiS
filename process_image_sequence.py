@@ -16,10 +16,22 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
 if __name__ == "__main__":
-    input_dir = "./data/UCSD_Anomaly_Dataset.v1p2/"
-    subsets = {"UCSDped1": ["Train", "Test"],
-               "UCSDped2": ["Test"]}
-    output_dir = "./data/processed/UCSD_Anomaly_Dataset.v1p2/"
+    # UCSD Pedestrian
+    # input_dir = "./data/UCSD_Anomaly_Dataset.v1p2/"
+    # subsets = {"UCSDped1": ["Train", "Test"],
+    #            "UCSDped2": ["Test"]}
+    # sequence_dirname_pattern = f"{split}**[0-9]"
+    # image_extension = ".tif"
+    # frame_idx_offset = 1
+    # output_dir = "./data/processed/UCSD_Anomaly_Dataset.v1p2/"
+
+    # ShanghaiTech Campus
+    input_dir = "./data/shanghaitech/"
+    subsets = {"testing": ["frames"]}
+    sequence_dirname_pattern = "*"
+    image_extension = ".jpg"
+    frame_idx_offset = 0
+    output_dir = "./data/processed/shanghaitech/"
 
     DEVICE = "mps"
     display = False
@@ -35,11 +47,11 @@ if __name__ == "__main__":
         subset_dir = os.path.join(input_dir, subset)
         for split in splits:
             subset_path = os.path.join(subset_dir, split)
-            for video_path in tqdm(glob(os.path.join(subset_path, f"{split}**[0-9]")), desc=f"Processing {subset}/{split}"):
+            for video_path in tqdm(glob(os.path.join(subset_path, sequence_dirname_pattern)), desc=f"Processing {subset}/{split}"):
                 # Load video frames
-                image_files = sorted([f for f in os.listdir(video_path) if f.endswith('.tif')])
+                image_files = sorted([f for f in os.listdir(video_path) if f.endswith(image_extension)])
                 if not image_files:
-                    raise Exception("No TIFF files found in the directory.")
+                    raise Exception(f"No {image_extension} files found in the directory.")
                 frames = [cv2.imread(os.path.join(video_path, image_file)) for image_file in image_files]
                 if write_results:
                     # Create output directories
@@ -62,12 +74,12 @@ if __name__ == "__main__":
                     keypoints_list = pose_estimator.infer(frame, bboxes)
                     # Update tracker with detections and flow
                     tracks = tracker.update(bboxes, flow)
-                    if write_results and tracks:
+                    if write_results:
                         # Export bboxes and pose estimations
-                        with open(os.path.join(output_path_json, f"{frame_idx + 1:03d}.json"), 'w') as f:
+                        with open(os.path.join(output_path_json, f"{frame_idx + frame_idx_offset:03d}.json"), 'w') as f:
                             json.dump({
                                 # (N, 5)
-                                "tracks": [[trackID, box.tolist()] for trackID, box in tracks],
+                                "tracks": [[trackID, box.tolist()] for trackID, box in tracks] if tracks else [],
                                 # (N, num_joints, n_features) = (N, 17, 3))
                                 "keypoints": [k.tolist() for k in keypoints_list],
                             }, f)
