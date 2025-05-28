@@ -1,12 +1,15 @@
 import os
 import glob
 import json
+
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 
-# P - max_people, T - seq_len, N - n_nodes, F_low - n_features, F_high - 2
+# P: max_people, T: seq_len, N: n_keypoints, F_low: n_low_level_features, F_high: n_high_level_features
+
+
 class SurveillanceAnomalyDataset(Dataset):
     def __init__(self, root_dir: str,
                  seq_len: int = 5, num_nodes: int = 17, n_features: int = 2, max_people: int = 30, transform=None):
@@ -111,18 +114,10 @@ class SurveillanceAnomalyDataset(Dataset):
         high_level_features = torch.tensor(np.stack(sequence_centers), dtype=torch.float32)
         # [max_people, T, num_nodes, n_features]
         low_level_features = torch.tensor(np.stack(sequence_joints), dtype=torch.float32)
-
-        # low_level_adj = self._get_skeleton_adjacency(self.num_nodes)
-        # high_level_adj = self._get_fully_connected_edges(self.max_people) if self.max_people > 0 else torch.empty(
-        #     (2, 0),
-        #     dtype=torch.long
-        # )
-
         # [T, (max_people * (max_people - 1)), 3]
         high_level_adj = self._get_dynamic_center_adjacency(high_level_features)
         # [max_people, T, num_nodes * (num_nodes - 1), 3]
         low_level_adj = self._get_dynamic_joint_adjacency(low_level_features)
-
         return {
             'high_level_features': high_level_features,  # [max_people, T, 2]
             'low_level_features': low_level_features,  # [max_people, T, num_nodes, n_features]
@@ -173,30 +168,6 @@ class SurveillanceAnomalyDataset(Dataset):
                 person_edges.append(edge_list)  # shape: [E, 3]
             edges_per_person.append(person_edges)
         return torch.tensor(edges_per_person, dtype=torch.float32)  # [max_people, T, E, 3]
-
-    # def _get_fully_connected_edges(self, num_nodes):
-    #     """
-    #     Creates a fully connected adjacency matrix (represented as edge index).
-    #     """
-    #     src, dst = [], []
-    #     for i in range(num_nodes):
-    #         for j in range(num_nodes):
-    #             if i != j:
-    #                 src.append(i)
-    #                 dst.append(j)
-    #     return torch.tensor([src, dst], dtype=torch.long)
-    #
-    # def _get_skeleton_adjacency(self, num_nodes):
-    #     """
-    #     Creates a fixed adjacency matrix based on human skeleton connections (HRNet).
-    #     """
-    #     edges = [
-    #         (0, 1), (1, 2), (2, 3), (0, 4), (4, 5), (5, 6), (0, 7), (7, 8), (8, 9),
-    #         (7, 10), (10, 11), (11, 12), (0, 13), (13, 14), (14, 15), (7, 16)
-    #     ]
-    #     src = [u for u, v in edges]
-    #     dst = [v for u, v in edges]
-    #     return torch.tensor([src, dst], dtype=torch.long)
 
 
 if __name__ == '__main__':
