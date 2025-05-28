@@ -18,18 +18,17 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 if __name__ == "__main__":
     # UCSD Pedestrian
     # input_dir = "./data/UCSD_Anomaly_Dataset.v1p2/"
-    # subsets = {"UCSDped1": ["Train", "Test"],
-    #            "UCSDped2": ["Test"]}
+    # subsets = {"UCSDped1": (["Train", "Test"], ".tif"),
+    #            "UCSDped2": (["Test"], ".tif")}
     # sequence_dirname_pattern = f"{split}**[0-9]"
-    # image_extension = ".tif"
     # frame_idx_offset = 1
     # output_dir = "./data/processed/UCSD_Anomaly_Dataset.v1p2/"
 
     # ShanghaiTech Campus
     input_dir = "./data/shanghaitech/"
-    subsets = {"testing": ["frames"]}
+    subsets = {"training": (["videos"], ".avi"),
+               "testing": (["frames"], ".jpg")}
     sequence_dirname_pattern = "*"
-    image_extension = ".jpg"
     frame_idx_offset = 0
     output_dir = "./data/processed/shanghaitech/"
 
@@ -43,16 +42,26 @@ if __name__ == "__main__":
                            model_path="./src/hrnet/weights/pose_hrnet_w48_384x288.pth", device=DEVICE)
     flow_estimator = RAFT(model_path='./src/raft/weights/raft-sintel.pth', device=DEVICE)
 
-    for subset, splits in subsets.items():
+    for subset, (splits, file_extension) in subsets.items():
         subset_dir = os.path.join(input_dir, subset)
         for split in splits:
             subset_path = os.path.join(subset_dir, split)
             for video_path in tqdm(glob(os.path.join(subset_path, sequence_dirname_pattern)), desc=f"Processing {subset}/{split}"):
                 # Load video frames
-                image_files = sorted([f for f in os.listdir(video_path) if f.endswith(image_extension)])
-                if not image_files:
-                    raise Exception(f"No {image_extension} files found in the directory.")
-                frames = [cv2.imread(os.path.join(video_path, image_file)) for image_file in image_files]
+                if file_extension == ".avi":
+                    frames = []
+                    cap = cv2.VideoCapture(video_path)
+                    success = True
+                    while success:
+                        success, frame = cap.read()
+                        if frame is not None:
+                            frames.append(frame)
+                else:
+                    image_files = sorted([f for f in os.listdir(video_path) if f.endswith(file_extension)])
+                    if not image_files:
+                        raise Exception(f"No {file_extension} files found in the directory.")
+                    frames = [cv2.imread(os.path.join(video_path, image_file)) for image_file in image_files]
+
                 if write_results:
                     # Create output directories
                     output_path = os.path.join(output_dir, subset, split, video_path.split('/')[-1])
