@@ -1,15 +1,11 @@
 import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv
-import pytorch_lightning as pl
-### TODO DEBUG
-import logging
-logging.basicConfig(filename="./shapes.log", level=logging.INFO, force=True)
-logger = logging.getLogger(__name__)
-###
+import lightning as pl
 
 
-# B:batch_size = 16, P: max_pople = 30, T: seq_len = 5, N: n_keypoints = 17
+
+# B: batch_size = 16, P: max_pople = 30, T: seq_len = 5, N: n_keypoints = 17
 # F_low: n_low_level_features = 2, F_high: n_high_level_features = 2
 # E_high: n_high_level_edges = P * (P-1) = 870, E_low: n_low_level_edges = n_keypoints * (n_keypoints-1) = 272
 
@@ -82,19 +78,44 @@ class FFP(nn.Module):
 
 # Outlier Arbiter
 class OA(nn.Module):
-    def __init__(self, in_channels, num_branches=3):
+    def __init__(self, weights=[1/3, 1/3, 1/3]):
         super().__init__()
-        self.branches = nn.ModuleList([nn.Linear(in_channels, 1) for _ in range(num_branches)])
-        self.weights = nn.Parameter(torch.ones(num_branches) / num_branches)
+        self.weights = nn.Parameter(torch.tensor(weights))  # W₁, W₂, W₃
 
-    def forward(self, x_pred, x_true):
-        # x_pred: [B, P, T, N, in_channels], x_true: [B, P, 1, N, in_channels]
-        diff = (x_pred - x_true) ** 2  # [B, P, T, N, in_channels]
-        diff = diff.mean(dim=[2, 3, 4])  # [B, P]
-        branch_outputs = [branch(diff) for branch in self.branches]  # List of [B, 1]
-        branch_outputs = torch.stack(branch_outputs, dim=1)  # [B, num_branches, 1]
-        weighted_sum = (branch_outputs * self.weights).sum(dim=1)  # [B, 1]
-        return weighted_sum.squeeze()  # [B]
+    def forward(self, x_pred, x_true, f_pred_g, f_true_g):
+        """
+        Inputs:
+        - x_pred: [B, P, 1, N, F_low] - predicted low-level features (5th frame)
+        - x_true: [B, P, 1, N, F_low] - ground truth low-level features
+        - f_pred_g: [B, P, 1, F_high] - predicted high-level features
+        - f_true_g: [B, P, 1, F_high] - ground truth high-level features
+        Returns:
+        - Anomaly score L: [B]
+        """
+        B, P, _, N, F_low = x_pred.shape
+        _, _, _, F_high = f_pred_g.shape
+        # L1: MSE over time, joints, and features
+        L1 = ((x_pred - x_true) ** 2).mean(dim=[1, 3, 4])  # [B]
+        # L2: max error over time (center point)
+        # Assume center point = mean over joints
+        center_pred = x_pred.mean(dim=3)  # [B, P, 1, F_low]
+        center_true = x_true.mean(dim=3)  # [B, P, 1, F_low]
+        center_err = ((center_pred - center_true) ** 2).mean(dim=3).squeeze(2)  # [B, P]
+        L2 = center_err.max(dim=1).values  # [B]
+        # L3: max pairwise motion vector error over time
+        # For all person-pairs i ≠ j, compute: (Δ_pred - Δ_true)^2
+        f_pred_g = f_pred_g.squeeze(2)  # [B, P, F_high]
+        f_true_g = f_true_g.squeeze(2)  # [B, P, F_high]
+        pred_diffs = f_pred_g.unsqueeze(2) - f_pred_g.unsqueeze(1)  # [B, P, P, F_high]
+        true_diffs = f_true_g.unsqueeze(2) - f_true_g.unsqueeze(1)  # [B, P, P, F_high]
+        motion_err = ((pred_diffs - true_diffs) ** 2).sum(dim=3)  # [B, P, P]
+        # Mask diagonal (i == j) by setting it to 0
+        eye = torch.eye(P, device=motion_err.device).bool()
+        motion_err.masked_fill_(eye.unsqueeze(0), 0.0)
+        L3 = motion_err.max(dim=2).values.max(dim=1).values  # [B]
+        # Weighted sum
+        L = self.weights[0] * L1 + self.weights[1] * L2 + self.weights[2] * L3  # [B]
+        return L
 
 
 # Hierarchical Spatio-Temporal Graph Convolutional Neural Network
@@ -125,33 +146,22 @@ class HSTGCNN(pl.LightningModule):
         hl_feats_per_t = []
         ll_feats_per_t = []
         for t in range(T_inp):
-            logger.info(f"forward/T={t}")  ### TODO DEBUG
             hl_input_t = high_level_features[:, t, :, :].unsqueeze(2)  # [B, P, 1, F_high]
-            logger.info(f"forward/hl_input_t={hl_input_t.shape}")  ### TODO DEBUG
             hl_edges_t = high_level_adj[:, t, :, :].unsqueeze(1).int()  # [B, 1, E_high, 3]
-            logger.info(f"forward/hl_edges_t={hl_edges_t.shape}")  ### TODO DEBUG
             hl_feat_t = self.high_level_stgcnn(hl_input_t, hl_edges_t).squeeze(2)  # [B, P, C_high]
-            logger.info(f"forward/hl_feat_t={hl_feat_t.shape}")  ### TODO DEBUG
             hl_feats_per_t.append(hl_feat_t)
 
             ll_input_t = low_level_features[:, t, :, :, :]  # [B, P, N, F_low]
-            logger.info(f"forward/ll_input_t={ll_input_t.shape}")  ### TODO DEBUG
             ll_edges_t = low_level_adj[:, :, t, :, :].int()  # [B, P, E_low, 3]
-            logger.info(f"forward/ll_edges_t={ll_edges_t.shape}")  ### TODO DEBUG
             ll_feat_t = self.low_level_stgcnn(ll_input_t, ll_edges_t)  # [B, P, N, C_low]
-            logger.info(f"forward/ll_feat_t={ll_feat_t.shape}\n")  ### TODO DEBUG
             ll_feats_per_t.append(ll_feat_t)
         # Stack over time
         hl_feat = torch.stack(hl_feats_per_t, dim=2)  # [B, P, T-1, C_high]
-        logger.info(f"forward/hl_feat={hl_feat.shape}")  ### TODO DEBUG
         ll_feat = torch.stack(ll_feats_per_t, dim=2)  # [B, P, T-1, N, C_low]
-        logger.info(f"forward/ll_feat={ll_feat.shape}")  ### TODO DEBUG
         # Feature Fusion
         fused_feat = self.feature_fusion(hl_feat, ll_feat)  # [B, P, T-1, N, fusion_channels]
-        logger.info(f"forward/fused_feat={fused_feat.shape}")  ### TODO DEBUG
         # Predict
-        pred = self.low_level_ffp(fused_feat)  # [B, P, T-1, N, F_low]
-        logger.info(f"forward/pred={pred.shape}\n")  ### TODO DEBUG
+        pred = self.low_level_ffp(fused_feat)  # [B, P, 1, N, F_low]
         return pred
 
     def step(self, batch, batch_idx):
@@ -160,24 +170,18 @@ class HSTGCNN(pl.LightningModule):
         high_level_adj = batch['high_level_adj'][:, :-1]  # [B, T-1, E_high, 3]
         low_level_adj = batch['low_level_adj'][:, :, :-1]  # [B, P, T-1, E_low, 3]
         future_low_level = batch['low_level_features'][:, :, -1:]  # [B, P, 1, N, F_low]
-        ### TODO DEBUG
-        logger.info(f"training_step/high_level_features={high_level_features.shape}")
-        logger.info(f"training_step/low_level_features={low_level_features.shape}")
-        logger.info(f"training_step/high_level_adj={high_level_adj.shape}")
-        logger.info(f"training_step/low_level_adj={low_level_adj.shape}\n")
-        ###
-        pred = self(high_level_features, low_level_features, high_level_adj, low_level_adj)  # [B, P, T-1, N, F_low]
-        loss = self.loss_fn(pred[:, :, -1:], future_low_level)  # Compare last predicted frame
+        pred = self(high_level_features, low_level_features, high_level_adj, low_level_adj)  # [B, P, 1, N, F_low]
+        loss = self.loss_fn(pred, future_low_level)
         return loss
 
     def training_step(self, batch, batch_idx):
         loss = self.step(batch, batch_idx)
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
         loss = self.step(batch, batch_idx)
-        self.log("val_loss", loss)
+        self.log("val_loss", loss, prog_bar=True)
         return loss
 
     def configure_optimizers(self):
