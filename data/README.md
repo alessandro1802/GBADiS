@@ -26,6 +26,7 @@ In Proc. IEEE Conference on Computer Vision and Pattern Recognition (CVPR), San 
 
 * For questions or comments, please contact Weixin Li at wel017@ucsd.edu
 
+
 # ShanghaiTech Dataset
 1. Download all split files using [this download link](https://onedrive.live.com/?id=303FB25922AAD438%2173214&cid=303FB25922AAD438)
 (from shanghaitech.tar.gz.aa to shanghaitech.tar.gz.ag)
@@ -36,3 +37,7 @@ cat shanghaitech.tar.gz.* > shanghaitech.tar.gz
 ```
 
 3. Extract the shanghaitech.tar.gz
+
+
+# Traffic environment ontology (TE)
+- [Homepage](https://spec.edmcouncil.org/auto/ontology/DE/TrafficEnvironment/)
