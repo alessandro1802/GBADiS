@@ -184,22 +184,24 @@ class OA(nn.Module):
         Inputs:
         - f_pred_g: [B, P, 1, F_high] high-level predictions (e.g., center or motion)
         - f_true_g: [B, P, 1, F_high] high-level ground truth
-        - f_pred_l: [B, P, 1, N, F_low] low-level predictions (per individual pose)
+        - f_pred_l: [B, P, 1, N, F_low] low-level prediction (per individual pose)
         - f_true_l: [B, P, 1, N, F_low] low-level ground truth
         """
         # L1: MSE over people, time, joints, and features
         L1 = ((f_pred_l - f_true_l) ** 2).mean(dim=[1, 2, 3, 4])  # [B]
         # L2: max error over time for each person, then mean over people
-        per_person_max_error = ((f_pred_g - f_true_g) ** 2).max(dim=2).values  # [B, P]
+        per_person_max_error = ((f_pred_g - f_true_g) ** 2).view(f_pred_g.shape[0],
+                                                                 f_pred_g.shape[1],
+                                                                 -1).max(dim=2).values  # [B, P]
         L2 = per_person_max_error.mean(dim=1)  # [B]
-        # L3: max pairwise motion vector error over time for each person
-        motion_pred = f_pred_g[:, :, 1:, :] - f_pred_g[:, :, :-1, :]  # [B, P, T-1, D]
-        motion_true = f_true_g[:, :, 1:, :] - f_true_g[:, :, :-1, :]  # [B, P, T-1, D]
-        motion_error = ((motion_pred - motion_true) ** 2).sum(dim=3)  # [B, P, T-1]
-        max_motion_error = motion_error.max(dim=2).values  # [B, P]
-        L3 = max_motion_error.mean(dim=1)  # [B]
+        # # L3: max pairwise motion vector error over time for each person
+        # motion_pred = f_pred_g[:, :, 1:, :] - f_pred_g[:, :, :-1, :]  # [B, P, T-1, F_high]
+        # motion_true = f_true_g[:, :, 1:, :] - f_true_g[:, :, :-1, :]  # [B, P, T-1, F_high]
+        # motion_error = ((motion_pred - motion_true) ** 2).sum(dim=3)  # [B, P, T-1]
+        # max_motion_error = motion_error.max(dim=2).values  # [B, P]
+        # L3 = max_motion_error.mean(dim=1)  # [B]
         # Weighted sum of losses
-        L = self.weights[0] * L1 + self.weights[1] * L2 + self.weights[2] * L3  # [B]
+        L = self.weights[0] * L1 + self.weights[1] * L2 # + self.weights[2] * L3  # [B]
         return L
 
 
