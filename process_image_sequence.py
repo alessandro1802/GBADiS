@@ -19,8 +19,8 @@ if __name__ == "__main__":
     # UCSD Pedestrian
     # input_dir = "./data/UCSD_Anomaly_Dataset.v1p2/"
     # subsets = {"UCSDped1": (["Train", "Test"], ".tif"),
-    #            "UCSDped2": (["Test"], ".tif")}
-    # sequence_dirname_pattern = f"{split}**[0-9]"
+    #            "UCSDped2": (["Train", "Test"], ".tif")}
+    # sequence_dirname_pattern = "**[0-9]"
     # frame_idx_offset = 1
     # output_dir = "./data/processed/UCSD_Anomaly_Dataset.v1p2/"
 
