@@ -3,7 +3,6 @@
 .DS_Store
 .env
 __pycache__/
-data/*
+
 *.pt
 *.pth
-
