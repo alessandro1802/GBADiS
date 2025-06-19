@@ -1,0 +1,15 @@
+artifact_uri: file:///Users/oleksandr/Documents/Studies/put-ai/MSc/thesis/GBADiS/mlruns/935558793063859619/2dc2cfb66ffa4d7b8ab69e4738e657d6/artifacts
+end_time: 1750111301911
+entry_point_name: ''
+experiment_id: '935558793063859619'
+lifecycle_stage: active
+run_id: 2dc2cfb66ffa4d7b8ab69e4738e657d6
+run_name: HSTGCNN@2.1.0
+run_uuid: 2dc2cfb66ffa4d7b8ab69e4738e657d6
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1750082328547
+status: 3
+tags: []
+user_id: oleksandr
