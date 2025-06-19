@@ -1,0 +1,6 @@
+[core]
+    remote = storage
+['remote "storage"']
+    url = gdrive://1lcTbLuwTnR-8agtJefpFDkDi8jwYZF8l
+    gdrive_client_id = YOUR_GDRIVE_CLIENT_ID
+    gdrive_client_secret = YOUR_GDRIVE_CLIENT_SECRET
