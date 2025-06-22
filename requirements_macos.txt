@@ -155,6 +155,7 @@ sqlparse==0.5.3
 stack-data==0.6.3
 starlette==0.46.2
 sympy==1.13.1
+sentence-transformers==4.1.0
 tensorboardX==2.6.2.2
 terminado==0.18.1
 thop==0.1.1.post2209072238

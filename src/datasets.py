@@ -2,9 +2,15 @@ import os
 import glob
 import json
 
-import numpy as np
 import torch
 from torch.utils.data import Dataset
+import torch_geometric
+from torch_geometric.utils import from_networkx
+
+import numpy as np
+from rdflib import Graph as RDFGraph
+import networkx as nx
+from sentence_transformers import SentenceTransformer
 
 
 # P: max_people, T: seq_len, N: n_keypoints, F_low: n_low_level_features, F_high: n_high_level_features
@@ -24,7 +30,7 @@ class SurveillanceAnomalyDataset(Dataset):
         self.root_dir = root_dir
         self.T = seq_len
         self.num_nodes = num_nodes
-        self.n_features = n_features  # Store (x, y) # TODO check RAFT return
+        self.n_features = n_features  # (x, y)
         self.max_people = max_people
         self.transform = transform
         self.samples = self._gather_samples()
@@ -168,6 +174,43 @@ class SurveillanceAnomalyDataset(Dataset):
                 person_edges.append(edge_list)  # shape: [E, 3]
             edges_per_person.append(person_edges)
         return torch.tensor(edges_per_person, dtype=torch.float32)  # [max_people, T, E, 3]
+
+
+def load_and_process_ontology(ontology_path: str, sentence_transformer: str = "all-MiniLM-L6-v2",
+                              device="mps") -> torch_geometric.data.Data:
+    def _extract_label(node: str) -> str:
+        node_str = str(node)
+        # Handle URI-based nodes (e.g., http://example.org/ChannelizedIntersection)
+        if "#" in node_str:
+            return node_str.split("#")[-1]
+        elif "/" in node_str:
+            return node_str.split("/")[-1]
+        # Handle blank nodes or UUID-style strings
+        if node_str.startswith("N") and len(node_str) > 20:
+            return ""  # skip or mark as unknown
+        return node_str
+
+    # Load ontology
+    rdf_graph = RDFGraph()
+    rdf_graph.parse(ontology_path, format="xml")
+    # Build a directed graph from RDF
+    G = nx.DiGraph()
+    for subj, pred, obj in rdf_graph:
+        G.add_edge(str(subj), str(obj), relation=str(pred))
+    # Preprocess node labels
+    labels = []
+    for node in G.nodes():
+        label = _extract_label(node)
+        if label.strip():
+            labels.append(label)
+        else:
+            labels.append("unknown")  # Placeholder for blank nodes
+    # Embed nodes
+    model = SentenceTransformer(sentence_transformer, device=device)
+    embeddings = model.encode(labels, convert_to_tensor=True)
+    for i, node in enumerate(G.nodes()):
+        G.nodes[node]["x"] = embeddings[i]
+    return from_networkx(G).to(device)
 
 
 if __name__ == '__main__':
