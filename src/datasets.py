@@ -1,5 +1,4 @@
 import os
-import glob
 import json
 
 import torch
@@ -8,6 +7,7 @@ import torch_geometric
 from torch_geometric.utils import from_networkx
 
 import numpy as np
+import pandas as pd
 from rdflib import Graph as RDFGraph
 import networkx as nx
 from sentence_transformers import SentenceTransformer
@@ -39,18 +39,20 @@ class SurveillanceAnomalyDataset(Dataset):
 
     def _gather_samples(self):
         """
-        Gathers paths to JSON files for each sequence in the dataset.
-        Each sample will contain a sequence of 'T' JSON files.
+        Gathers sequences of 'T' consecutive frames from a single CSV per video.
+        Each sample contains metadata from T consecutive frames.
         """
         samples = []
-        for seq_folder in sorted(os.listdir(self.root_dir)):
-            seq_path = os.path.join(self.root_dir, seq_folder)
-            json_dir = os.path.join(seq_path, 'json')
-            if os.path.isdir(json_dir):
-                json_files = sorted(glob.glob(os.path.join(json_dir, '*.json')))
-                if len(json_files) >= self.T:
-                    for i in range(len(json_files) - self.T + 1):
-                        samples.append(json_files[i : i + self.T])
+        csv_files = [os.path.join(self.root_dir, f) for f in sorted(os.listdir(self.root_dir)) if f.endswith('.csv')]
+        for csv_path in csv_files:
+            df = pd.read_csv(csv_path)
+            # Group by frame index
+            frame_groups = df.groupby("frame_idx")
+            frame_indices = sorted(frame_groups.groups.keys())
+            # Slide over T-length sequences of frames
+            for i in range(len(frame_indices) - self.T + 1):
+                frame_seq = frame_indices[i: i + self.T]
+                samples.append([frame_groups.get_group(f) for f in frame_seq])  # List of T DataFrames
         return samples
 
     def __len__(self):
@@ -60,52 +62,46 @@ class SurveillanceAnomalyDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx):
-        frame_paths = self.samples[idx]
+        frame_data = self.samples[idx]
         trackid_to_skeletons = dict()  # {trackID: [skeleton_t0, skeleton_t1, ..., skeleton_tT]}
         trackid_to_centers = dict()
         trackid_to_heights = dict()
-        # Read the data
-        for frame_idx, frame_path in enumerate(frame_paths):
-            with open(frame_path, 'r') as f:
-                data = json.load(f)
-            tracks = data.get('tracks', [])  # [[trackID, box], ...]
-            keypoint_data = data.get('keypoints', [])  # [[num_nodes, 3], ...]
-            # Map trackID to keypoints
-            for (track_id, _), keypoints in zip(tracks, keypoint_data):
-                keypoints_arr = np.array(keypoints, dtype=np.float32)[:, :self.n_features]  # [num_nodes, n_features]
+        # Extract the data
+        for frame_idx, frame_df in enumerate(frame_data):
+            # Iterate detections
+            for _, row in frame_df.iterrows():
+                track_id = int(row['trackID'])
+                # [num_nodes, n_features]
+                keypoints = np.array(eval(row['keypoints']), dtype=np.float32)[:, :self.n_features]
+                # Initialize new tracks
                 if track_id not in trackid_to_skeletons:
-                    trackid_to_skeletons[track_id] = []
-                    trackid_to_centers[track_id] = []
-                    trackid_to_heights[track_id] = []
-                trackid_to_skeletons[track_id].append(keypoints_arr)
+                    trackid_to_skeletons[track_id] = [np.zeros((self.num_nodes, self.n_features),
+                                                               dtype=np.float32) for _ in range(self.T)]
+                    trackid_to_centers[track_id] = [np.zeros(2, dtype=np.float32) for _ in range(self.T)]
+                    trackid_to_heights[track_id] = [0.0 for _ in range(self.T)]
+                trackid_to_skeletons[track_id][frame_idx] = keypoints
                 # Compute geometric center and height
-                torso_joints = keypoints_arr[self.torso_joint_indices]
+                torso_joints = keypoints[self.torso_joint_indices]
                 center = np.mean(torso_joints, axis=0)
-                height = np.max(keypoints_arr[:, 1]) - np.min(keypoints_arr[:, 1])
-                trackid_to_centers[track_id].append(center.astype(np.float32))
-                trackid_to_heights[track_id].append(height)
-            # Pad missing trackIDs with zeros for this frame
-            for track_id in trackid_to_skeletons:
-                while len(trackid_to_skeletons[track_id]) < frame_idx + 1:
-                    trackid_to_skeletons[track_id].append(np.zeros((self.num_nodes, self.n_features), dtype=np.float32))
-                    trackid_to_centers[track_id].append(np.zeros(2, dtype=np.float32))
-                    trackid_to_heights[track_id].append(0.0)
+                trackid_to_centers[track_id][frame_idx] = center.astype(np.float32)
+                height = np.max(keypoints[:, 1]) - np.min(keypoints[:, 1])
+                trackid_to_heights[track_id][frame_idx] = height
         # Normalize all tracked sequences
         sequence_centers = []
         sequence_joints = []
         for track_id in trackid_to_skeletons:
             centers = np.stack(trackid_to_centers[track_id])  # [T, 2]
             sequence_centers.append(centers)
+
+            normalized_sequence = []
             trajectory = np.stack(trackid_to_skeletons[track_id])  # [T, num_nodes, n_features]
             heights = np.array(trackid_to_heights[track_id], dtype=np.float32)  # [T]
-
-            normalized = []
             for t in range(self.T):
                 h = heights[t] / 2.0 if heights[t] > 0 else 1.0
                 normalized_frame = (trajectory[t] - centers[t]) / np.clip(h, a_min=1e-6, a_max=None)
-                normalized.append(normalized_frame)
-            normalized = np.stack(normalized)  # [T, num_nodes, n_features]
-            sequence_joints.append(normalized)
+                normalized_sequence.append(normalized_frame)
+            normalized_sequence = np.stack(normalized_sequence)  # [T, num_nodes, n_features]
+            sequence_joints.append(normalized_sequence)
         # Pad/truncate to self.max_people
         num_people = len(sequence_centers)
         padding_needed = self.max_people - num_people
