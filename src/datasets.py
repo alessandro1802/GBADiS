@@ -1,5 +1,6 @@
 import os
-import json
+import re
+from typing import List
 
 import torch
 from torch.utils.data import Dataset
@@ -11,6 +12,7 @@ import pandas as pd
 from rdflib import Graph as RDFGraph
 import networkx as nx
 from sentence_transformers import SentenceTransformer
+from sklearn.preprocessing import MinMaxScaler
 
 
 # P: max_people, T: seq_len, N: n_keypoints, F_low: n_low_level_features, F_high: n_high_level_features
@@ -207,6 +209,59 @@ def load_and_process_ontology(ontology_path: str, sentence_transformer: str = "a
     for i, node in enumerate(G.nodes()):
         G.nodes[node]["x"] = embeddings[i]
     return from_networkx(G).to(device)
+
+
+def load_UCSD_labels(filepath: str, video_len: int = 200) -> np.ndarray:
+    # Load .m file
+    gt_list = []
+    with open(filepath, 'r') as f:
+        for line in f:
+            match = re.search(r'gt_frame\s*=\s*\[(.*?)\];', line)
+            if match:
+                frame_str = match.group(1)
+                # Expand MATLAB-style ranges (60:152 -> 60, 61, ..., 152)
+                frame_nums = []
+                for part in frame_str.replace(',', ' ').split():
+                    if ':' in part:
+                        start, end = map(int, part.split(':'))
+                        frame_nums.extend(range(start, end + 1))
+                    else:
+                        frame_nums.append(int(part))
+                # Convert to 0-based indexing
+                gt_list.append([i - 1 for i in frame_nums])
+    # Create binary labels for each frame in every video
+    labels = []
+    for gt_frames in gt_list:
+        label = np.zeros(video_len, dtype=int)
+        label[gt_frames] = 1
+        labels.append(label)
+    return np.array(labels)
+
+
+def normalize_scores(scores: List[float], scaler=MinMaxScaler) -> np.ndarray:
+    scores_arr = np.array(scores)
+    scores_arr = scaler().fit_transform(scores_arr[..., np.newaxis])
+    return scores_arr / np.amax(scores_arr)
+
+
+def reduce_to_regions(labels: List[float], predictions: List[float]) -> (np.ndarray, np.ndarray):
+    labels = np.array(labels)
+    predictions = np.array(predictions)
+    reduced_labels = []
+    reduced_preds = []
+    start = 0
+    while start < len(labels):
+        # Find start of next region (either label or prediction changes)
+        end = start + 1
+        while end < len(labels) and labels[end] == labels[start]:
+            end += 1
+        # Reduce current region
+        region_label = labels[start]
+        region_max_pred = predictions[start:end].max()
+        reduced_labels.append(region_label)
+        reduced_preds.append(region_max_pred)
+        start = end
+    return np.array(reduced_labels), np.array(reduced_preds)
 
 
 if __name__ == '__main__':
