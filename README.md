@@ -40,25 +40,14 @@ docker run -d \
 ```
 
 #### [DVC](https://dvc.org)
-The processed datasets are stored on a Google Drive.  
-To use the remote storage edit `.dvc/config.local` inputting your client ID and secret. 
-It should look like this:
-```
-['remote "storage"']
-    gdrive_client_id = YOUR_GDRIVE_CLIENT_ID
-    gdrive_client_secret = YOUR_GDRIVE_CLIENT_SECRET
-```
-Then obtain the processed datasets with:
-```shell
-dcv pull
-```
+Refer to `data/README.md` for description and instructions.
 
 ## Model changelog
-| Model            | Version | Description                                                                                                                                                                                 |
-|------------------|---------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| HSTGCNN          | v1.0.0  | Input: 4 frames<br>Output: 5th frame predictions<br>OA output: L1 + L2 (reduced in temporal dimension)                                                                                      |
-| KnowledgeHSTGCNN | v1.0.0  | Input: 4 frames + structural ontology features<br>Output: 5th frame predictions<br>OA output: L1 + L2 (reduced in temporal dimension)                                                       |
-| HSTGCNN          | v2.0.0  | Input: 4 frames<br>Output: 4 frames reconstruction + 5th frame predictions<br>OA output: L1 + L2 + L3 (simplified)                                                                          |
-| KnowledgeHSTGCNN | v2.0.0  | Input: 4 frames<br>Output: 4 frames reconstruction + 5th frame predictions<br>OA output: L1 + L2 + L3 (simplified)                                                                          |
-| HSTGCNN          | v2.1.0  | Input: 4 frames<br>Output: 4 frames reconstruction + 5th frame predictions<br>OA output: L1 + L2 + L3, softmax(weights)                                                                     |
-| KnowledgeHSTGCNN | v3.0.0  | Input: 4 frames<br>Output: 4 frames reconstruction + 5th frame predictions<br>Feature fusion updated with multi-head cross-attention mechanism<br>OA output: L1 + L2 + L3, softmax(weights) |
+| Model            | Version | Description                                                                                                                                                                                                                                    |
+|------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| HSTGCNN          | v1.0.0  | Input: 4 frames<br>Output: 5th frame predictions<br>OA output: L1 + L2 (reduced in temporal dimension)                                                                                                                                         |
+| KnowledgeHSTGCNN | v1.0.0  | Input: 4 frames + structural ontology features<br>Output: 5th frame predictions<br>OA output: L1 + L2 (reduced in temporal dimension)                                                                                                          |
+| HSTGCNN          | v2.0.0  | Input: 4 frames<br>Output: 4 frames reconstruction + 5th frame predictions<br>OA output: L1 + L2 + L3 (simplified)                                                                                                                             |
+| KnowledgeHSTGCNN | v2.0.0  | Input: 4 frames<br>Output: 4 frames reconstruction + 5th frame predictions<br>OA output: L1 + L2 + L3 (simplified)                                                                                                                             |
+| HSTGCNN          | v2.1.0  | Input: 4 frames<br>Output: 4 frames reconstruction + 5th frame predictions<br>OA output: L1 + L2 + L3, softmax(weights)                                                                                                                        |
+| KnowledgeHSTGCNN | v3.0.0  | Input: 4 frames<br>Output: 4 frames reconstruction + 5th frame predictions<br>Feature fusion updated with ontology node embeddings multi-head cross-attention mechanism<br>OA output: L1 + L2 + L3, softmax(weights)                           |
