@@ -38,6 +38,7 @@ docker run -d \
     --host 0.0.0.0 \
     --port 5000
 ```
+Copy `.env.example` to `.env` and put your `MLFLOW_TRACKING_URI` address, e.g., `"http://localhost:5050"`.  
 
 #### [DVC](https://dvc.org)
 Refer to `data/README.md` for description and instructions.
