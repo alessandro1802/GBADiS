@@ -211,7 +211,7 @@ def load_and_process_ontology(ontology_path: str, sentence_transformer: str = "a
     return from_networkx(G).to(device)
 
 
-def load_UCSD_labels(filepath: str, video_len: int = 200) -> np.ndarray:
+def load_UCSD_labels(filepath: str, video_lens: List[int]) -> np.ndarray:
     # Load .m file
     gt_list = []
     with open(filepath, 'r') as f:
@@ -231,11 +231,11 @@ def load_UCSD_labels(filepath: str, video_len: int = 200) -> np.ndarray:
                 gt_list.append([i - 1 for i in frame_nums])
     # Create binary labels for each frame in every video
     labels = []
-    for gt_frames in gt_list:
-        label = np.zeros(video_len, dtype=int)
+    for i, gt_frames in enumerate(gt_list):
+        label = np.zeros(video_lens[i], dtype=int)
         label[gt_frames] = 1
         labels.append(label)
-    return np.array(labels)
+    return labels
 
 
 def normalize_scores(scores: List[float], scaler=MinMaxScaler) -> np.ndarray:
