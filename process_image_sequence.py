@@ -34,13 +34,15 @@ if __name__ == "__main__":
 
     DEVICE = "mps"
     IMAGE_SIZE = (960, 544)
+    NORMALIZED_COORDS = True
     display = False
     write_results = True
 
     # Load models
     detector = YOLOv5(model_path="./src/yolov5/weights/yolov5x.pt", device=DEVICE)
     pose_estimator = HRNet(cfg_path="./src/hrnet/experiments/coco/hrnet/w48_384x288_adam_lr1e-3.yaml",
-                           model_path="./src/hrnet/weights/pose_hrnet_w48_384x288.pth", device=DEVICE)
+                           model_path="./src/hrnet/weights/pose_hrnet_w48_384x288.pth",
+                           normalized_coords=NORMALIZED_COORDS, device=DEVICE)
     flow_estimator = RAFT(model_path='./src/raft/weights/raft-sintel.pth', device=DEVICE)
 
     for subset, (splits, file_extension) in subsets.items():
@@ -88,11 +90,11 @@ if __name__ == "__main__":
                     if display:
                         # Draw optical flow, bboxes and key-points on the frame
                         img = frame.copy()
-                        img = draw_bboxes(img, tracks)
+                        img = draw_bboxes(img, tracks, normalized_coords=NORMALIZED_COORDS)
                         for keypoints in keypoints_list:
-                            img = draw_keypoints(img, keypoints)
+                            img = draw_keypoints(img, keypoints, normalized_coords=NORMALIZED_COORDS)
                         # Show results
-                        cv2.imshow('Pose Estimation', img)
+                        cv2.imshow("Tracking and pose estimation", img)
                         # Break on pressing 'q' or space
                         key = cv2.waitKey(1) & 0xFF
                         if key == ord(' ') or key == ord('q'):

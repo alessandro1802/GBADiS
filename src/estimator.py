@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 from argparse import Namespace
+from typing import List, Tuple
 
 import numpy as np
 import cv2
@@ -20,7 +21,7 @@ class HRNet:
     def __init__(self,
                  cfg_path="./hrnet/experiments/coco/hrnet/w48_384x288_adam_lr1e-3.yaml",
                  model_path="./hrnet/weights/pose_hrnet_w48_384x288.pth",
-                 device="cpu"):
+                 normalized_coords=False, device="cpu"):
         # Load config and update global cfg
         self.cfg = cfg
         # COCO flip pairs
@@ -37,6 +38,7 @@ class HRNet:
         )
         update_config(self.cfg, args)
         # Initialize model
+        self.normalized_coords = normalized_coords
         self.device = device
         self.model = pose_hrnet.get_pose_net(cfg, is_train=False)
         self.model.load_state_dict(torch.load(model_path, map_location=self.device))
@@ -48,14 +50,14 @@ class HRNet:
         self.input_size = tuple(self.image_size.astype(int))
 
 
-    def infer(self, image, bboxes):
+    def infer(self, image: np.ndarray, bboxes: List[List[int | float]]) -> List[np.ndarray]:
         """
         Run pose estimation on all bounding boxes in the given image.
         Args:
-            image (np.ndarray): BGR image.
-            bboxes (List[List[int]]): List of [x1, y1, x2, y2] bounding boxes.
+            image: BGR image.
+            bboxes: List of [x1, y1, x2, y2] bounding boxes.
         Returns:
-            List[np.ndarray]: List of key-points arrays (num_joints x 3).
+            List of key-points arrays (num_joints x 3).
         """
         keypoints = []
         for bbox in bboxes:
@@ -70,6 +72,12 @@ class HRNet:
                 else:
                     output = output.cpu().numpy()
                 preds, confs = get_final_preds(self.cfg, output, np.array([center]), np.array([scale]))
+                if self.normalized_coords:
+                    height, width = image.shape[:2]
+                    for i in range(len(preds[0])):
+                        x, y = preds[0][i]
+                        x, y = x / width, y / height
+                        preds[0][i] = [x, y]
                 keypoints.append(np.concatenate([preds[0], confs[0]], axis=1))  # shape: (num_joints, 3))
         return keypoints
 
@@ -78,14 +86,18 @@ class HRNet:
         Prepare an input tensor for a single person from the image and bbox.
         Args:
             image (np.ndarray): BGR image.
-            bbox (List[int]): [x1, y1, x2, y2] bounding box.
+            bbox (List[int | float]): [x1, y1, x2, y2] bounding box.
         Returns:
             torch.Tensor: Input tensor (1, 3, H, W)
             np.ndarray: Center
             np.ndarray: Scale
             np.ndarray: Affine transform matrix
         """
-        x, y, w, h = self._xyxy_to_center_scale(bbox)
+        if self.normalized_coords:
+            height, width = image.shape[:2]
+        else:
+            height, width = None, None
+        x, y, w, h = self._xyxy_to_center_scale(bbox, height, width)
         center = np.array([x, y], dtype=np.float32)
         scale = np.array([w / 200.0, h / 200.0], dtype=np.float32)
 
@@ -97,15 +109,20 @@ class HRNet:
         img = torch.from_numpy(img).unsqueeze(0).to(self.device)  # (1, 3, H, W)
         return img, center, scale, trans
 
-    def _xyxy_to_center_scale(self, bbox):
+    def _xyxy_to_center_scale(self, bbox, height, width):
         """
         Convert a bounding box to center + scale for affine transform.
         Args:
-            bbox (List[int]): [x1, y1, x2, y2]
+            bbox (List[int | float]): [x1, y1, x2, y2]
+            height (int | None): image height.
+            width (int | None): image width.
         Returns:
             Tuple[float, float, float, float]: center_x, center_y, width, height
         """
         x1, y1, x2, y2 = bbox
+        if height and width:
+            x1, y1 = int(x1 * width), int(y1 * height)
+            x2, y2 = int(x2 * width), int(y2 * height)
         w = x2 - x1
         h = y2 - y1
         center_x = (x1 + x2) / 2

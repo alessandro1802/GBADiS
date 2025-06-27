@@ -7,22 +7,34 @@ from sklearn.metrics import roc_curve, auc
 
 
 def draw_bboxes(image: np.ndarray, tracks: List[List[Union[int, np.ndarray]]],
-                font_scale: float = 0.2, color: Tuple[int, int, int] = (0, 0, 255), thickness: int = 1) -> np.ndarray:
+                font_scale: float = 0.6, color: Tuple[int, int, int] = (0, 255, 0), thickness: int = 2,
+                normalized_coords: bool = False) -> np.ndarray:
     img = image.copy()
+    if normalized_coords:
+        height, width = img.shape[:2]
     for track_id, bbox in tracks:
-        x1, y1, x2, y2 = [int(coord) for coord in bbox]
+        x1, y1, x2, y2 = bbox
+        if normalized_coords:
+            x1, y1 = int(x1 * width), int(y1 * height)
+            x2, y2 = int(x2 * width), int(y2 * height)
         cv2.rectangle(img, (x1, y1), (x2, y2), color, thickness)
-        cv2.putText(img, f"ID: {track_id}", (x1, y1 - 2),
+        cv2.putText(img, f"ID: {track_id}", (x1, y1 - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
     return img
 
 
-def draw_keypoints(image: np.ndarray, keypoints: List[np.ndarray],
-                   threshold: float = 0.3, color: Tuple[int, int, int] = (0, 255, 0), thickness: int = 1) -> np.ndarray:
+def draw_keypoints(image: np.ndarray, keypoints: np.ndarray,
+                   threshold: float = 0.01, color: Tuple[int, int, int] = (255, 0, 255), thickness: int = 2,
+                   normalized_coords: bool = False) -> np.ndarray:
     img = image.copy()
+    if normalized_coords:
+        height, width = img.shape[:2]
     for x, y, conf in keypoints:
         if conf > threshold:
-            cv2.circle(img, (int(x), int(y)), thickness, color, -1)
+            if normalized_coords:
+                cv2.circle(img, (int(x * width), int(y * height)), thickness, color, -1)
+            else:
+                cv2.circle(img, (int(x), int(y)), thickness, color, -1)
     return img
 
 
