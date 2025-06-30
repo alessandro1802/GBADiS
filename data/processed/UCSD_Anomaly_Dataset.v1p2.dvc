@@ -1,6 +1,6 @@
 outs:
-- md5: a7411e33e025376ca19d23aa84253981.dir
-  size: 241169727
+- md5: d3d35f5f14b32eba080b09bbfa5f6706.dir
+  size: 235782948
   nfiles: 98
   hash: md5
   path: UCSD_Anomaly_Dataset.v1p2
