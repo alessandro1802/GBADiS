@@ -10,17 +10,23 @@ pip install -r requirements.txt
 ```
 
 ### Submodules
-- [YOLOv5](https://github.com/ultralytics/yolov5): 
+- [YOLOv11](https://docs.ultralytics.com/models/yolo11/): This model can be used to form a complete *Object detector - Object tracker - Pose estimator* pipeline.  
+The model weights with pose estimation functionality can be downloaded from [this URL](https://github.com/ultralytics/ultralytics/tree/main/ultralytics/cfg/models/11) and should be put under `src/yolov11/weights/`.  
+The object tracker config can be found at [this link](https://docs.ultralytics.com/modes/track/) and should be put under `src/yolov11/trackers/`.
+
+
+In the original study where were 3 modules used separately for object detection, pose estimation and object tracking:
+1. [YOLOv5](https://github.com/ultralytics/yolov5): 
 `yolov5x` weights can be downloaded from [this URL](https://github.com/ultralytics/yolov5#pretrained-checkpoints) and should be put under `src/yolov5/weights/`
 
-- [HRnet](https://github.com/HRNet/HRNet-Human-Pose-Estimation): 
+2. [HRnet](https://github.com/HRNet/HRNet-Human-Pose-Estimation): 
 `pose_hrnet_w48_384x288` weights are available at [this link](https://drive.google.com/drive/folders/1nzM_OBV9LbAEA7HClC0chEyf_7ECDXYA) and should be put under `src/hrnet/weights/`   
 Install `geos` dependency with, e.g.:
 ```shell
 brew install geos
 ```
 
-- [RAFT](https://github.com/princeton-vl/RAFT): 
+3. [RAFT](https://github.com/princeton-vl/RAFT): 
 `raft-sintel` weights can be fetched from [this URL](https://drive.google.com/drive/folders/1sWDsfuZ3Up38EUQt7-JDTT1HcGHuJgvT) and should be put under `src/raft/weights/`
 
 ### MLOps
